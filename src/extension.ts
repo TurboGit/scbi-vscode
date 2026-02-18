@@ -27,6 +27,18 @@ export function activate(context: vscode.ExtensionContext) {
         const plgdir = getPluginDir();
         const lscbi = path.join(root, ".vscode", "scbi");
 
+        let env: string | undefined = undefined;
+
+        const envFiles = ["default"].concat(fs.readdirSync(plgdir)
+            .filter(file => file.startsWith(".env-"))
+            .map(file => file.replace(".env-", "")));
+
+        if (envFiles.length > 1) {
+            env = await vscode.window.showQuickPick(envFiles, {
+                placeHolder: "Select SCBI environment"
+            });
+        }
+
         let pluginFiles: string[] = [];
         let plugin: string | undefined = undefined;
 
@@ -104,12 +116,17 @@ export function activate(context: vscode.ExtensionContext) {
 
         const target = `${plugin}${variant}${version}`;
 
+        let envopt = "";
+        if (env != "default") {
+            envopt = ` --env=${env}`;
+        }
+
         const task = new vscode.Task(
             { type: "scbi", target },
             vscode.TaskScope.Workspace,
             `SCBI ${target}`,
             "scbi",
-            new vscode.ShellExecution(`scbi --deps --safe ${target}`),
+            new vscode.ShellExecution(`scbi${envopt} --deps --safe ${target}`),
             "$scbi-gcc"
         );
 
