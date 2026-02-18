@@ -1,26 +1,122 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
-
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "scbi-tools" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('scbi-tools.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from scbi-tools!');
-	});
-
-	context.subscriptions.push(disposable);
+function getPluginDir(): string {
+    return path.join(os.homedir(), '.config', 'scbi');
 }
 
-// This method is called when your extension is deactivated
+export function activate(context: vscode.ExtensionContext) {
+
+    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+    statusBar.text = "$(tools) SCBI Build";
+    statusBar.command = "scbi.build";
+    statusBar.tooltip = "Build SCBI target";
+    statusBar.show();
+
+    const buildCommand = vscode.commands.registerCommand('scbi.build', async () => {
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            vscode.window.showErrorMessage("No workspace open.");
+            return;
+        }
+
+        const root = workspaceFolders[0].uri.fsPath;
+        const plgdir = getPluginDir();
+        const lscbi = path.join(root, ".vscode", "scbi");
+
+        let pluginFiles: string[] = [];
+        let plugin: string | undefined = undefined;
+
+        if (fs.existsSync(lscbi)) {
+            fs.readFileSync(lscbi, 'utf8').split('\n').forEach(line => {
+                if (line.trim() !== "") {
+                    pluginFiles.push(line.trim());
+                }
+            });
+        } else {
+            // Find SCBI plugins (<letter>-*)
+            pluginFiles = fs.readdirSync(plgdir)
+                .filter(file => file.match("^[a-z]-"));
+        };
+
+        // Check for no plug-in or if a single one, select it,
+        // otherwise show a quick pick
+
+        if (pluginFiles.length === 0) {
+            vscode.window.showErrorMessage("No SCBI plugins found.");
+            return;
+        } else if (pluginFiles.length === 1) {
+            plugin = pluginFiles.at(0);
+        } else {
+            plugin = await vscode.window.showQuickPick(pluginFiles, {
+                placeHolder: "Select SCBI plugin"
+            });
+        }
+
+        if (!plugin) return;
+
+        const pluginPath = path.join(plgdir, plugin);
+        const content = fs.readFileSync(pluginPath, 'utf8');
+
+        // Extract variants from function names
+        const variantRegex = new RegExp(`${plugin}-(.*?)-(config|config-options|build|install|test)`, 'g');
+        const variants = new Set<string>();
+        let match;
+
+        variants.add("none");
+
+        while ((match = variantRegex.exec(content)) !== null) {
+            variants.add(match[1]);
+        }
+
+        let variantList = Array.from(variants);
+        let variant = "none";
+
+        if (variantList.length != 0) {
+           let variant = await vscode.window.showQuickPick(variantList, {
+               placeHolder: "Select build variant"
+           });
+        }
+
+        if (variant == "none") {
+            variant = "";
+        }
+        else {
+            variant = `/${variant}`;
+        }
+
+        let version = await await vscode.window.showInputBox({
+            prompt: 'Select or enter a version',
+            placeHolder: "Type or select...",
+            value: '',
+            valueSelection: [-1, -1],
+            ignoreFocusOut: true,
+        });
+
+        if (version == "undefined") {
+            version = "";
+        } else {
+            version = `:${version}`;
+        }
+
+        const target = `${plugin}${variant}${version}`;
+
+        const task = new vscode.Task(
+            { type: "scbi", target },
+            vscode.TaskScope.Workspace,
+            `SCBI ${target}`,
+            "scbi",
+            new vscode.ShellExecution(`scbi --deps --safe ${target}`),
+            "$scbi-gcc"
+        );
+
+        vscode.tasks.executeTask(task);
+    });
+
+    context.subscriptions.push(buildCommand, statusBar);
+}
+
 export function deactivate() {}
